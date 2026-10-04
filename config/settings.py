@@ -97,7 +97,7 @@ class Settings:
 
     # --- Google Gemini ---
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL: str = gemini-flash-lite-latest"
+    GEMINI_MODEL: str = "gemini-3.8-flash"
 
     # --- Flask ---
     FLASK_SECRET_KEY: str = os.getenv("FLASK_SECRET_KEY", "dev-secret")
