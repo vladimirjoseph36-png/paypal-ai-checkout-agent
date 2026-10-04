@@ -1,0 +1,560 @@
+﻿/* ==========================================================================
+   PayPal AI Checkout Agent — Design premium avec fond anime
+   --------------------------------------------------------------------------
+   Author  : Anio Joseph
+   Project : PayPal AI Hackathon 2026
+   --------------------------------------------------------------------------
+   Structure des couches (du fond vers l'avant) :
+     1. Degrade radial PayPal ......... .background-layer::before
+     2. Grille lumineuse .............. .background-layer::after
+     3. Mosaique de logos PayPal ...... .logo-mosaic > .paypal-watermark
+     4. Particules flottantes ......... .particles > .particle
+     5. Panneau chat glassmorphism .... .app
+     6. Elements d'interface .......... header, .chat, .composer, .suggestions
+   ========================================================================== */
+
+
+/* ==========================================================================
+   1. RESET + VARIABLES GLOBALES
+   ========================================================================== */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* Couleurs de fond */
+  --bg: #0a0e27;
+  --bg-2: rgba(19, 24, 56, 0.85);
+  --card: rgba(255, 255, 255, 0.04);
+
+  /* Bordures et texte */
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #e8ecf8;
+  --text-dim: #8b93b8;
+
+  /* Palette PayPal */
+  --accent: #0070ba;
+  --accent-2: #00a8e8;
+  --accent-glow: rgba(0, 168, 232, 0.4);
+
+  /* Bulles de chat */
+  --user-bubble: linear-gradient(135deg, #0070ba 0%, #00a8e8 100%);
+  --agent-bubble: rgba(255, 255, 255, 0.05);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow: hidden;
+  position: relative;
+}
+
+
+/* ==========================================================================
+   2. FOND ANIME MULTI-COUCHES
+   ========================================================================== */
+
+.background-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   Couche 2.1 — Degrade radial PayPal (fond le plus profond)
+   -------------------------------------------------------------------------- */
+.background-layer::before {
+  content: '';
+  position: absolute;
+  inset: -50%;
+  z-index: 1;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(0, 112, 186, 0.35), transparent 45%),
+    radial-gradient(circle at 80% 70%, rgba(0, 168, 232, 0.28), transparent 45%),
+    radial-gradient(circle at 50% 100%, rgba(0, 112, 186, 0.20), transparent 50%);
+  animation: bgFloat 25s ease-in-out infinite alternate;
+}
+
+@keyframes bgFloat {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(-3%, -2%) scale(1.05); }
+  100% { transform: translate(2%, 3%) scale(1); }
+}
+
+/* --------------------------------------------------------------------------
+   Couche 2.2 — Grille lumineuse (au-dessus du degrade)
+   -------------------------------------------------------------------------- */
+.background-layer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background-image:
+    linear-gradient(rgba(0, 168, 232, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 168, 232, 0.06) 1px, transparent 1px);
+  background-size: 50px 50px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  animation: gridMove 40s linear infinite;
+}
+
+@keyframes gridMove {
+  from { background-position: 0 0; }
+  to   { background-position: 50px 50px; }
+}
+
+/* --------------------------------------------------------------------------
+   Couche 2.3 — Mosaique de logos PayPal en watermark
+   --------------------------------------------------------------------------
+   Beaucoup de petits logos repartis en grille sur tout l'ecran.
+   Tres transparents, avec une pulsation douce et individuelle.
+   Les valeurs --base-opacity et --rot sont definies par le JS pour chaque logo.
+   -------------------------------------------------------------------------- */
+
+.logo-mosaic {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.paypal-watermark {
+  position: absolute;
+  pointer-events: none;
+  filter: blur(0.3px)
+          drop-shadow(0 0 12px rgba(0, 168, 232, 0.35));
+  animation: watermarkPulse 8s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+@keyframes watermarkPulse {
+  0%, 100% {
+    opacity: var(--base-opacity, 0.08);
+    transform: rotate(var(--rot, 0deg)) translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: calc(var(--base-opacity, 0.08) * 1.6);
+    transform: rotate(var(--rot, 0deg)) translate(-50%, -50%) scale(1.06);
+  }
+}
+
+/* Sur tres petit ecran, on reduit la densite visuelle */
+@media (max-width: 700px) {
+  .paypal-watermark {
+    opacity: 0.05 !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Couche 2.4 — Particules flottantes (au-dessus des logos)
+   -------------------------------------------------------------------------- */
+.background-layer .particles {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+}
+
+.particle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  background: #00a8e8;
+  border-radius: 50%;
+  box-shadow: 0 0 12px rgba(0, 168, 232, 0.9);
+  opacity: 0;
+  animation: particleFloat linear infinite;
+}
+
+@keyframes particleFloat {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.5);
+  }
+  10% { opacity: 0.8; }
+  90% { opacity: 0.6; }
+  100% {
+    opacity: 0;
+    transform: translateY(-110vh) scale(1);
+  }
+}
+
+
+/* ==========================================================================
+   3. APPLICATION — Panneau glassmorphism
+   ========================================================================== */
+
+.app {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  max-width: 780px;
+  height: 90vh;
+  max-height: 900px;
+  background: rgba(19, 24, 56, 0.55);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 30px 80px -20px rgba(0, 112, 186, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+
+/* ==========================================================================
+   4. HEADER
+   ========================================================================== */
+
+header {
+  padding: 20px 26px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(10, 14, 39, 0.5);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #0070ba, #00a8e8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 20px;
+  color: white;
+  box-shadow: 0 0 24px var(--accent-glow);
+  animation: logoGlow 3s ease-in-out infinite;
+}
+
+@keyframes logoGlow {
+  0%, 100% { box-shadow: 0 0 24px rgba(0, 168, 232, 0.4); }
+  50%      { box-shadow: 0 0 36px rgba(0, 168, 232, 0.7); }
+}
+
+.title-block {
+  flex: 1;
+}
+
+.title-block h1 {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+}
+
+.title-block p {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.author {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 8px #22c55e;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+
+/* ==========================================================================
+   5. ZONE DE CHAT
+   ========================================================================== */
+
+.chat {
+  flex: 1;
+  overflow-y: auto;
+  padding: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  scroll-behavior: smooth;
+}
+
+.chat::-webkit-scrollbar { width: 6px; }
+.chat::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+/* --- Message --- */
+.message {
+  display: flex;
+  gap: 12px;
+  animation: slideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  max-width: 85%;
+}
+
+.message.user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* --- Avatar --- */
+.avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.message.user .avatar {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-dim);
+}
+
+.message.agent .avatar {
+  background: linear-gradient(135deg, #0070ba, #00a8e8);
+  color: white;
+}
+
+/* --- Bulle --- */
+.bubble {
+  padding: 13px 17px;
+  border-radius: 16px;
+  font-size: 14.5px;
+  line-height: 1.55;
+  word-wrap: break-word;
+}
+
+.message.user .bubble {
+  background: var(--user-bubble);
+  color: white;
+  border-bottom-right-radius: 4px;
+  box-shadow: 0 4px 20px rgba(0, 112, 186, 0.3);
+}
+
+.message.agent .bubble {
+  background: var(--agent-bubble);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+
+/* --- Liens dans les bulles --- */
+.bubble a {
+  color: #4fc3f7;
+  text-decoration: none;
+  font-weight: 600;
+  border-bottom: 1px dashed rgba(79, 195, 247, 0.4);
+  transition: all 0.2s;
+}
+
+.bubble a:hover {
+  color: #81d4fa;
+  border-bottom-color: #81d4fa;
+}
+
+/* --- Indicateur de frappe --- */
+.typing {
+  display: flex;
+  gap: 4px;
+  padding: 14px 18px;
+}
+
+.typing span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  animation: typing 1.4s infinite;
+}
+
+.typing span:nth-child(2) { animation-delay: 0.2s; }
+.typing span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30%           { transform: translateY(-6px); opacity: 1; }
+}
+
+
+/* ==========================================================================
+   6. COMPOSER — Zone de saisie
+   ========================================================================== */
+
+.composer {
+  padding: 18px 22px 22px;
+  border-top: 1px solid var(--border);
+  background: rgba(10, 14, 39, 0.5);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.input-wrap {
+  display: flex;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 6px 6px 6px 18px;
+  transition: all 0.2s;
+}
+
+.input-wrap:focus-within {
+  border-color: rgba(0, 168, 232, 0.5);
+  box-shadow: 0 0 0 4px rgba(0, 168, 232, 0.1);
+}
+
+input[type="text"] {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 14.5px;
+  font-family: inherit;
+}
+
+input::placeholder {
+  color: var(--text-dim);
+}
+
+button {
+  background: linear-gradient(135deg, #0070ba, #00a8e8);
+  border: none;
+  color: white;
+  padding: 11px 22px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.2s;
+  box-shadow: 0 4px 14px rgba(0, 112, 186, 0.4);
+}
+
+button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0, 168, 232, 0.5);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
+/* ==========================================================================
+   7. SUGGESTIONS
+   ========================================================================== */
+
+.suggestions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 0 22px 14px;
+}
+
+.chip {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 7px 13px;
+  border-radius: 20px;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  box-shadow: none;
+}
+
+.chip:hover {
+  background: rgba(0, 168, 232, 0.1);
+  border-color: rgba(0, 168, 232, 0.4);
+  color: #4fc3f7;
+  transform: none;
+}
+
+
+/* ==========================================================================
+   8. SELECTEUR DE LANGUE
+   ========================================================================== */
+
+.lang-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 30px 7px 12px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  /* Fleche SVG integree */
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b93b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 14px;
+}
+
+.lang-select:hover {
+  background-color: rgba(0, 168, 232, 0.1);
+  border-color: rgba(0, 168, 232, 0.4);
+}
+
+.lang-select:focus {
+  outline: none;
+  border-color: rgba(0, 168, 232, 0.6);
+  box-shadow: 0 0 0 3px rgba(0, 168, 232, 0.15);
+}
+
+.lang-select option {
+  background: #131838;
+  color: var(--text);
+  padding: 8px;
+}

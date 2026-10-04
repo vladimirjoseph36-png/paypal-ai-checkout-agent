@@ -1,0 +1,60 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PayPal AI Checkout Agent — Anio Joseph</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="background-layer" aria-hidden="true"></div>
+
+  <div class="app">
+    <header>
+      <div class="logo">P</div>
+      <div class="title-block">
+        <h1 data-i18n="app_title">PayPal AI Checkout Agent</h1>
+        <p><span class="status-dot"></span> <span data-i18n="status_online">Agent online · Sandbox</span></p>
+      </div>
+
+      <select id="lang-select" class="lang-select" aria-label="Language">
+        <option value="en">🇬🇧 English</option>
+        <option value="fr">🇫🇷 Français</option>
+        <option value="es">🇪🇸 Español</option>
+      </select>
+
+      <div class="author">by Anio Joseph</div>
+    </header>
+
+    <div class="chat" id="chat">
+      <div class="message agent">
+        <div class="avatar">AI</div>
+        <div class="bubble" data-i18n="welcome_message">
+          Hello 👋 I'm your personal shopping assistant.
+          Tell me what you want to buy and at what price,
+          I'll create the PayPal order for you in seconds.
+        </div>
+      </div>
+    </div>
+
+    <div class="suggestions" id="suggestions">
+      <button class="chip" data-i18n="suggestion_1">I want to buy a bluetooth headset for $49.99</button>
+      <button class="chip" data-i18n="suggestion_2">Buy a gaming mouse for $29.99</button>
+      <button class="chip" data-i18n="suggestion_3">A mechanical keyboard for $89</button>
+    </div>
+
+    <div class="composer">
+      <div class="input-wrap">
+        <input type="text" id="input" data-i18n-placeholder="input_placeholder"
+               placeholder="Describe your purchase…" autocomplete="off" />
+        <button id="send" data-i18n="send_button">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
