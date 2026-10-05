@@ -1,18 +1,22 @@
 ﻿"""
-Conversational AI agent powered by Google Gemini.
+Conversational AI agent with multi-provider LLM support.
 
 This module defines :class:`CheckoutAgent`, the component responsible
 for understanding natural-language purchase intents and calling the
-appropriate PayPal tools via **Gemini function calling**.
+appropriate PayPal tools.
 
-Key responsibilities:
+The agent supports **two LLM providers**:
 
-* Configure the Gemini model with a multilingual system prompt.
-* Maintain one chat session per user and per language.
-* Automatically invoke :func:`agent.tools.create_order_tool` when a
-  purchase intent is detected.
-* Provide a **mock mode** that simulates the AI's behaviour without
-  calling Gemini or PayPal (useful for judges / offline demos).
+* **Groq** (default) — free, no credit card required, 30 req/min.
+* **Google Gemini** — used as a fallback.
+
+For the Groq provider, the purchase intent is detected
+**deterministically** (regex on the amount). This guarantees that a
+PayPal order is created whenever the user message contains a price,
+regardless of the LLM's tool-calling behaviour.
+
+A third **mock mode** is available for judges / offline demos: it
+uses simple regex rules and never calls any external API.
 
 Supported languages:
     * ``en`` — English (default)
@@ -32,6 +36,7 @@ import re
 from typing import Any, Dict, Optional, Tuple
 
 import google.generativeai as genai
+from groq import Groq
 
 from agent.tools import create_order_tool
 from config import settings
@@ -40,84 +45,60 @@ from config import settings
 # ======================================================================
 # System prompts (real mode)
 # ======================================================================
-# Each prompt instructs the model to:
-#   1. Detect a purchase intent with an amount.
-#   2. Call `create_order_tool` immediately.
-#   3. Reply in the user's language with a Markdown payment link.
 
 SYSTEM_PROMPTS: Dict[str, str] = {
     "en": """You are a professional, warm and concise shopping assistant.
 
-When the user expresses a purchase intent with an amount
-(e.g. "I want to buy a bluetooth headset for $50"), you IMMEDIATELY call
-the create_order_tool function with:
-    - amount_usd: the amount in US dollars
-    - description: a short description of the product
+If the user message does NOT contain an amount or a purchase intent,
+reply politely in ENGLISH (1-2 sentences) and ask them what they
+would like to buy and for how much.
 
-NEVER ask for confirmation: create the order directly.
-Then reply in ENGLISH, in 2-3 sentences max, and end with a clickable
-PayPal link in Markdown format:
-    [Pay now](URL)
-
-Be professional and reassuring.""",
+Keep it short. Do NOT invent prices. Do NOT confirm any order.""",
 
     "fr": """Tu es un assistant d'achat professionnel, concis et chaleureux.
 
-Quand l'utilisateur exprime une intention d'achat avec un montant
-(ex: "je veux acheter un casque a 50$"), tu appelles IMMEDIATEMENT
-la fonction create_order_tool avec :
-    - amount_usd : le montant en dollars US
-    - description : une description courte du produit
+Si le message de l'utilisateur ne contient PAS de montant ni
+d'intention d'achat, réponds poliment en FRANÇAIS (1 à 2 phrases) et
+demande-lui ce qu'il souhaite acheter et à quel prix.
 
-Ne demande JAMAIS de confirmation : cree la commande directement.
-Reponds ensuite en FRANCAIS, en 2 a 3 phrases maximum, et termine
-par un lien PayPal cliquable au format Markdown :
-    [Payer maintenant](URL)
-
-Sois professionnel et rassurant.""",
+Reste bref. N'invente PAS de prix. Ne confirme AUCUNE commande.""",
 
     "es": """Eres un asistente de compras profesional, cercano y conciso.
 
-Cuando el usuario exprese una intencion de compra con un monto
-(ej: "quiero comprar unos auriculares por $50"), llamas INMEDIATAMENTE
-a la funcion create_order_tool con:
-    - amount_usd: el monto en dolares US
-    - description: una descripcion corta del producto
+Si el mensaje del usuario NO contiene un monto ni una intención de
+compra, responde con educación en ESPAÑOL (1-2 frases) y pregúntale
+qué quiere comprar y a qué precio.
 
-NUNCA pidas confirmacion: crea la orden directamente.
-Luego responde en ESPANOL, en 2-3 frases maximo, y termina con un
-enlace PayPal clicable en formato Markdown:
-    [Pagar ahora](URL)
-
-Se profesional y tranquilizador.""",
+Sé breve. NO inventes precios. NO confirmes ningún pedido.""",
 }
 
 
 # ======================================================================
-# Mock mode responses
+# Template replies (used when an amount is detected)
 # ======================================================================
-# Used when `settings.is_mock_mode` is True. The text is templated with
-# {description}, {amount}, and {url}.
 
-MOCK_REPLIES: Dict[str, str] = {
+ORDER_CONFIRMATION_TEMPLATES: Dict[str, str] = {
     "en": (
         "✅ I've created your order for **{description}** "
         "for **${amount:.2f}**.\n\n"
-        "👉 [Pay now]({url})\n\n"
-        "_(Mock mode: no real PayPal call was made.)_"
+        "👉 [Pay now]({url})"
     ),
     "fr": (
         "✅ J'ai créé votre commande pour **{description}** "
         "d'un montant de **{amount:.2f} $**.\n\n"
-        "👉 [Payer maintenant]({url})\n\n"
-        "_(Mode démo : aucun appel PayPal réel n'a été effectué.)_"
+        "👉 [Payer maintenant]({url})"
     ),
     "es": (
         "✅ He creado tu pedido para **{description}** "
         "por **${amount:.2f}**.\n\n"
-        "👉 [Pagar ahora]({url})\n\n"
-        "_(Modo demo: no se realizó ninguna llamada real a PayPal.)_"
+        "👉 [Pagar ahora]({url})"
     ),
+}
+
+MOCK_DISCLAIMERS: Dict[str, str] = {
+    "en": "\n\n_(Mock mode: no real PayPal call was made.)_",
+    "fr": "\n\n_(Mode démo : aucun appel PayPal réel n'a été effectué.)_",
+    "es": "\n\n_(Modo demo: no se realizó ninguna llamada real a PayPal.)_",
 }
 
 MOCK_FALLBACK: Dict[str, str] = {
@@ -140,19 +121,11 @@ SUPPORTED_LANGS: tuple[str, ...] = ("en", "fr", "es")
 
 
 # ======================================================================
-# Helpers (mock mode only)
+# Helpers
 # ======================================================================
 
 def _normalise_lang(lang: Optional[str]) -> str:
-    """
-    Return a supported language code, defaulting to English.
-
-    Args:
-        lang: The language code to normalise.
-
-    Returns:
-        A code present in :data:`SUPPORTED_LANGS`.
-    """
+    """Return a supported language code, defaulting to English."""
     if lang in SUPPORTED_LANGS:
         return lang
     return DEFAULT_LANG
@@ -163,12 +136,6 @@ def _parse_amount(message: str) -> Optional[float]:
     Extract the first monetary amount found in a message.
 
     Supports: ``49.99``, ``49,99``, ``$49.99``, ``49.99$``, ``50 USD``, etc.
-
-    Args:
-        message: The raw user message.
-
-    Returns:
-        The amount as a float, or ``None`` if no amount was found.
     """
     normalized = message.replace(",", ".")
     match = re.search(r"(\d+(?:\.\d{1,2})?)", normalized)
@@ -180,39 +147,76 @@ def _parse_amount(message: str) -> Optional[float]:
         return None
 
 
+# List of keywords to strip from the message when extracting a
+# product description. Kept as a plain Python list for clarity and
+# easy maintenance.
+_DESCRIPTION_STOPWORDS = [
+    "i want to buy",
+    "i would like to buy",
+    "i want",
+    "i would like",
+    "please",
+    "buy",
+    "purchase",
+    "je veux acheter",
+    "je voudrais acheter",
+    "je veux",
+    "je voudrais",
+    "svp",
+    "acheter",
+    "quiero comprar",
+    "quisiera comprar",
+    "quiero",
+    "comprar",
+    "por favor",
+    "for",
+    "pour",
+    "por",
+    "usd",
+    "dollar",
+    "dollars",
+    "euro",
+    "euros",
+    "a",
+    "an",
+    "the",
+    "un",
+    "une",
+    "le",
+    "la",
+    "les",
+    "my",
+    "mon",
+    "ma",
+    "mes",
+    "me",
+    "moi",
+]
+
+
 def _extract_description(message: str, lang: str) -> str:
     """
-    Extract a product description from a user message (mock mode only).
+    Extract a product description from a user message.
 
-    Removes amounts and common purchase-related keywords, then
-    falls back to a generic label if nothing remains.
-
-    Args:
-        message: The raw user message.
-        lang: The target language code.
-
-    Returns:
-        A cleaned-up product description.
+    Removes amounts, currency symbols and common purchase-related
+    keywords. Falls back to a generic label if nothing remains.
     """
-    # 1. Remove numeric amounts
+    # 1. Remove numbers
     cleaned = re.sub(r"\d+(?:[.,]\d{1,2})?", "", message)
 
-    # 2. Remove common purchase keywords and currency symbols
-    keywords_pattern = (
-        r"\b("
-        r"i want to buy|buy|purchase|"
-        r"je veux acheter|acheter|"
-        r"quiero comprar|comprar|"
-        r"for|pour|por|"
-        r"usd"
-        r")\b"
-    )
-    cleaned = re.sub(keywords_pattern, "", cleaned, flags=re.IGNORECASE)
+    # 2. Remove currency symbols
+    cleaned = re.sub(r"[\$€£]", "", cleaned)
 
-    # 3. Remove currency symbols (not word-bound, so done separately)
-    cleaned = re.sub(r"[\$€]", "", cleaned)
+    # 3. Remove stopwords (case-insensitive, whole word)
+    for word in _DESCRIPTION_STOPWORDS:
+        cleaned = re.sub(
+            r"\b" + re.escape(word) + r"\b",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
 
-    # 4. Clean up whitespace and punctuation
+    # 4. Collapse whitespace and strip punctuation
     cleaned = " ".join(cleaned.split()).strip(" .,!?-")
 
     if cleaned:
@@ -233,69 +237,46 @@ class CheckoutAgent:
     """
     Multilingual conversational agent that creates PayPal orders.
 
-    The agent supports two modes:
-
-    * **Real mode** — uses Google Gemini with function calling.
-    * **Mock mode** — uses regex-based intent detection and a fake
-      PayPal response, so the app can be demonstrated without
-      credentials.
-
     Attributes:
         is_mock: Whether the agent runs in mock mode.
-        model_name: The Gemini model identifier.
+        provider: The selected LLM provider ("groq" or "gemini").
     """
 
     def __init__(self) -> None:
-        """Initialise the agent and (in real mode) configure Gemini."""
         self.is_mock: bool = settings.is_mock_mode
-        self.model_name: str = settings.GEMINI_MODEL
+        self.provider: str = getattr(settings, "LLM_PROVIDER", "groq").lower()
         self._models: Dict[str, Any] = {}
 
-        if not self.is_mock:
+        # Initialise Groq client (only if not in mock mode)
+        self._groq_client: Optional[Groq] = None
+        if not self.is_mock and self.provider == "groq":
+            self._groq_client = Groq(api_key=settings.GROQ_API_KEY)
+
+        # Initialise Gemini (fallback) if needed
+        if not self.is_mock and self.provider == "gemini":
             genai.configure(api_key=settings.GEMINI_API_KEY)
 
     # ------------------------------------------------------------------
-    # Real mode
+    # Public API
     # ------------------------------------------------------------------
 
-    def _get_model(self, lang: str) -> Any:
-        """
-        Return (and cache) the Gemini model for the given language.
-
-        Creating a new model is expensive, so we cache one instance
-        per supported language.
-
-        Args:
-            lang: A language code from :data:`SUPPORTED_LANGS`.
-
-        Returns:
-            A configured :class:`google.generativeai.GenerativeModel`.
-        """
-        lang = _normalise_lang(lang)
-
-        if lang not in self._models:
-            self._models[lang] = genai.GenerativeModel(
-                model_name=self.model_name,
-                system_instruction=SYSTEM_PROMPTS[lang],
-                tools=[create_order_tool],
-            )
-        return self._models[lang]
-
     def new_session(self, lang: str = DEFAULT_LANG) -> Any:
-        """
-        Start a new chat session in the given language.
-
-        Args:
-            lang: A language code from :data:`SUPPORTED_LANGS`.
-
-        Returns:
-            A new ``ChatSession`` (real mode) or a lightweight dict
-            (mock mode).
-        """
+        """Start a new chat session in the given language."""
         if self.is_mock:
-            return {"lang": _normalise_lang(lang)}
+            return {"lang": _normalise_lang(lang), "messages": []}
 
-        model = self._get_model(lang)
+        if self.provider == "groq":
+            return {
+                "lang": _normalise_lang(lang),
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": SYSTEM_PROMPTS[_normalise_lang(lang)],
+                    },
+                ],
+            }
+
+        model = self._get_gemini_model(lang)
         return model.start_chat(enable_automatic_function_calling=True)
 
     def ask(
@@ -304,42 +285,107 @@ class CheckoutAgent:
         chat_session: Optional[Any] = None,
         lang: str = DEFAULT_LANG,
     ) -> Tuple[str, Any]:
-        """
-        Send a message to the agent and return its response.
-
-        Args:
-            message: The user's message.
-            chat_session: An existing session, or ``None`` to create one.
-            lang: The language code for the reply.
-
-        Returns:
-            A tuple ``(reply_text, updated_session)``.
-        """
+        """Send a message to the agent and return its response."""
         if self.is_mock:
             reply = self._ask_mock(message, lang)
-            return reply, {"lang": _normalise_lang(lang)}
+            return reply, {"lang": _normalise_lang(lang), "messages": []}
 
-        if chat_session is None:
-            chat_session = self.new_session(lang)
+        if self.provider == "groq":
+            return self._ask_groq(message, chat_session, lang)
 
-        response = chat_session.send_message(message)
-        return response.text, chat_session
+        return self._ask_gemini(message, chat_session, lang)
+
+    # ------------------------------------------------------------------
+    # Groq (primary)
+    # ------------------------------------------------------------------
+
+    def _ask_groq(
+        self,
+        message: str,
+        session: Optional[Dict[str, Any]],
+        lang: str,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """
+        Send a message to Groq.
+
+        If a price is detected, the PayPal order is created directly
+        and the reply is templated (deterministic).
+        Otherwise, Groq is asked to reply naturally.
+        """
+        lang = _normalise_lang(lang)
+
+        if session is None:
+            session = self.new_session(lang)
+
+        session["messages"].append({"role": "user", "content": message})
+
+        # --- 1. Detect a purchase intent ---
+        amount = _parse_amount(message)
+        if amount is not None and amount > 0:
+            description = _extract_description(message, lang) or "item"
+            result = create_order_tool(
+                amount_usd=amount,
+                description=description,
+            )
+
+            reply = ORDER_CONFIRMATION_TEMPLATES[lang].format(
+                description=description.capitalize(),
+                amount=amount,
+                url=result["approve_url"],
+            )
+            session["messages"].append({"role": "assistant", "content": reply})
+            return reply, session
+
+        # --- 2. No amount: let Groq reply naturally ---
+        try:
+            response = self._groq_client.chat.completions.create(
+                model=settings.GROQ_MODEL,
+                messages=session["messages"],
+                temperature=0.4,
+                max_tokens=200,
+            )
+            reply = response.choices[0].message.content or MOCK_FALLBACK[lang]
+        except Exception:
+            reply = MOCK_FALLBACK[lang]
+
+        session["messages"].append({"role": "assistant", "content": reply})
+        return reply, session
+
+    # ------------------------------------------------------------------
+    # Gemini (fallback)
+    # ------------------------------------------------------------------
+
+    def _get_gemini_model(self, lang: str) -> Any:
+        """Return (and cache) the Gemini model for the given language."""
+        lang = _normalise_lang(lang)
+        if lang not in self._models:
+            self._models[lang] = genai.GenerativeModel(
+                model_name=settings.GEMINI_MODEL,
+                system_instruction=SYSTEM_PROMPTS[lang],
+                tools=[create_order_tool],
+            )
+        return self._models[lang]
+
+    def _ask_gemini(
+        self,
+        message: str,
+        session: Optional[Any],
+        lang: str,
+    ) -> Tuple[str, Any]:
+        """Send a message to Gemini (fallback, keeps function calling)."""
+        if session is None:
+            session = self._get_gemini_model(lang).start_chat(
+                enable_automatic_function_calling=True
+            )
+        response = session.send_message(message)
+        return response.text, session
 
     # ------------------------------------------------------------------
     # Mock mode
     # ------------------------------------------------------------------
 
     def _ask_mock(self, message: str, lang: str) -> str:
-        """
-        Simulate an agent response without calling Gemini or PayPal.
-
-        Args:
-            message: The user's message.
-            lang: The target language code.
-
-        Returns:
-            A templated reply string.
-        """
+        """Simulate an agent response without calling any external API."""
         lang = _normalise_lang(lang)
 
         amount = _parse_amount(message)
@@ -347,16 +393,14 @@ class CheckoutAgent:
             return MOCK_FALLBACK[lang]
 
         description = _extract_description(message, lang)
-
-        # `create_order_tool` automatically returns a mock order
-        # because the PayPalClient checks `settings.is_mock_mode`.
         result = create_order_tool(amount, description)
 
-        return MOCK_REPLIES[lang].format(
+        reply = ORDER_CONFIRMATION_TEMPLATES[lang].format(
             description=description.capitalize(),
             amount=amount,
             url=result["approve_url"],
         )
+        return reply + MOCK_DISCLAIMERS[lang]
 
 
-__all__ = ["CheckoutAgent", "SYSTEM_PROMPTS", "MOCK_REPLIES"]
+__all__ = ["CheckoutAgent", "SYSTEM_PROMPTS", "ORDER_CONFIRMATION_TEMPLATES"]
